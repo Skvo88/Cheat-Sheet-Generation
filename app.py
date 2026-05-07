@@ -3,26 +3,21 @@ import re
 from io import BytesIO
 from docx import Document
 from docx.shared import Cm, Pt, Mm, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ROW_HEIGHT_RULE, WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 # =====================================================================
-# БЛОК 1: НИЗКОУРОВНЕВАЯ РАБОТА С XML (СЕТКА И ГРАНИЦЫ ИЗ ВАШЕГО КОДА)
+# БЛОК 1: XML-ПОМОЩНИКИ (СЕТКА, ОТСТУПЫ, РАМКИ И ЗАЩИТА ОТ РАЗРЫВОВ)
 # =====================================================================
 
 def set_cell_margins(cell, top_mm, bottom_mm, left_mm, right_mm):
-    """
-    Устанавливает внутренние отступы (padding) ячейки в миллиметрах.
-    Оригинальная функция из вашего кода (сохранена на 100%).
-    """
-    def mm_to_dxa(mm):
-        return int((mm / 25.4) * 1440)
-
+    """Устанавливает внутренние отступы ячейки в миллиметрах (padding)."""
+    def mm_to_dxa(mm): return int((mm / 25.4) * 1440)
     tcPr = cell._element.get_or_add_tcPr()
     tcMar = OxmlElement('w:tcMar')
-    for margin, val in zip(['top', 'bottom', 'left', 'right'],[top_mm, bottom_mm, left_mm, right_mm]):
+    for margin, val in zip(['top', 'bottom', 'left', 'right'], [top_mm, bottom_mm, left_mm, right_mm]):
         node = OxmlElement(f'w:{margin}')
         node.set(qn('w:w'), str(mm_to_dxa(val)))
         node.set(qn('w:type'), 'dxa')
@@ -30,16 +25,11 @@ def set_cell_margins(cell, top_mm, bottom_mm, left_mm, right_mm):
     tcPr.append(tcMar)
 
 def set_table_borders(table, outer_style, inner_style, border_size_pt=1):
-    """
-    Продвинутая функция для настройки границ таблицы через XML Oxml.
-    Позволяет задать разные стили для внешних и внутренних границ.
-    """
-    sz_val = str(int(border_size_pt * 8)) # Размер (sz) измеряется в 1/8 пункта
-    
+    """Настройка внешних и внутренних границ таблицы через OXML."""
+    sz_val = str(int(border_size_pt * 8))
     tblPr = table._element.tblPr
     tblBorders = OxmlElement('w:tblBorders')
 
-    # Внешние границы
     for border_name in ['top', 'left', 'bottom', 'right']:
         border = OxmlElement(f'w:{border_name}')
         border.set(qn('w:val'), outer_style)
@@ -48,7 +38,6 @@ def set_table_borders(table, outer_style, inner_style, border_size_pt=1):
         border.set(qn('w:color'), '000000')
         tblBorders.append(border)
 
-    # Внутренние границы
     for border_name in ['insideH', 'insideV']:
         border = OxmlElement(f'w:{border_name}')
         border.set(qn('w:val'), inner_style)
@@ -60,103 +49,170 @@ def set_table_borders(table, outer_style, inner_style, border_size_pt=1):
     tblPr.append(tblBorders)
 
 # =====================================================================
-# БЛОК 2: АНАЛИЗАТОР ФОРМАТИРОВАНИЯ (КЛОНИРОВАНИЕ ДОКУМЕНТА)
+# БЛОК 2: АНАЛИЗАТОР И ПЕРЕНОСЧИК СТИЛЕЙ XML (ДЛЯ КЛОНИРОВАНИЯ ФОНОВ/ЦВЕТОВ)
 # =====================================================================
 
-def extract_run_format(run):
+def extract_run_style_xml(run):
     """
-    Вытаскивает ВСЕ стили из конкретного кусочка текста в Word.
-    Гарантирует, что оригинальное выделение (цвета, фоны, жирность) не потеряется.
+    Вытаскивает все стили, включая цвет текста, цвет фона (Shading)
+    и цвет маркера (Highlight) напрямую из разметки XML.
     """
-    # Безопасное извлечение цвета текста (RGB)
-    color_rgb = None
-    if run.font.color and run.font.color.type == 1:  # 1 означает RGB
-        color_rgb = run.font.color.rgb
-
-    return {
+    rPr = run._element.rPr
+    style = {
         'bold': bool(run.bold),
         'italic': bool(run.italic),
         'underline': bool(run.underline),
         'strike': bool(run.font.strike),
-        'color': color_rgb,
-        'highlight': run.font.highlight_color, # Цвет маркера (фон)
+        'color': None,
+        'shd': None,
+        'highlight': None,
+        'font_name': None,
+        'font_size': None
     }
-
-def apply_format_to_run(run, fmt_dict):
-    """
-    Применяет сохраненный словарь стилей к новому кусочку текста в карточке.
-    """
-    if fmt_dict['bold']: run.bold = True
-    if fmt_dict['italic']: run.italic = True
-    if fmt_dict['underline']: run.underline = True
-    if fmt_dict['strike']: run.font.strike = True
-    
-    if fmt_dict['color']:
-        run.font.color.rgb = fmt_dict['color']
+    if rPr is not None:
+        # Извлекаем точный цвет шрифта
+        color_el = rPr.find(qn('w:color'))
+        if color_el is not None:
+            style['color'] = color_el.get(qn('w:val'))
         
-    if fmt_dict['highlight']:
-        run.font.highlight_color = fmt_dict['highlight']
+        # Извлекаем фоновую заливку (Pink/Yellow Shading из вашего исходника)
+        shd = rPr.find(qn('w:shd'))
+        if shd is not None:
+            style['shd'] = shd.get(qn('w:fill'))
+            
+        # Извлекаем маркер (Highlight)
+        hl = rPr.find(qn('w:highlight'))
+        if hl is not None:
+            style['highlight'] = hl.get(qn('w:val'))
+            
+        # Название шрифта
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is not None:
+            style['font_name'] = rFonts.get(qn('w:ascii')) or rFonts.get(qn('w:hAnsi'))
+            
+        # Размер шрифта
+        sz = rPr.find(qn('w:sz'))
+        if sz is not None:
+            try:
+                style['font_size'] = float(sz.get(qn('w:val'))) / 2.0
+            except:
+                pass
+    return style
+
+def apply_xml_style_to_run(run, style, global_config):
+    """Применяет накопленные XML стили к новой ячейке Word-карточки."""
+    rPr = run._element.get_or_add_rPr()
+    
+    if style['bold']: run.bold = True
+    if style['italic']: run.italic = True
+    if style['underline']: run.underline = True
+    if style['strike']: run.font.strike = True
+    
+    # Цвет шрифта
+    if style['color']:
+        color_el = OxmlElement('w:color')
+        color_el.set(qn('w:val'), style['color'])
+        rPr.append(color_el)
+        
+    # Фоновая заливка (Shading)
+    if style['shd']:
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), style['shd'])
+        rPr.append(shd)
+        
+    # Выделение маркером (Highlight)
+    if style['highlight']:
+        hl = OxmlElement('w:highlight')
+        hl.set(qn('w:val'), style['highlight'])
+        rPr.append(hl)
+        
+    # Гарнитура и размер шрифта
+    f_name = style['font_name'] or global_config['font_name']
+    f_size = style['font_size'] or global_config['font_size']
+    
+    if f_name:
+        rFonts = OxmlElement('w:rFonts')
+        rFonts.set(qn('w:ascii'), f_name)
+        rFonts.set(qn('w:hAnsi'), f_name)
+        rPr.append(rFonts)
+        
+    if f_size:
+        sz = OxmlElement('w:sz')
+        sz.set(qn('w:val'), str(int(f_size * 2)))
+        rPr.append(sz)
 
 # =====================================================================
-# БЛОК 3: "СПЯЩИЕ" УМНЫЕ ПРАВИЛА (ВКЛЮЧАЮТСЯ ТОЛЬКО ПО ЖЕЛАНИЮ)
+# БЛОК 3: УМНЫЙ ОБРАБОТЧИК СЛОВАРНЫХ ПРАВИЛ И ВЫДЕЛЕНИЙ
 # =====================================================================
 
 def hex_to_rgb(hex_str):
-    """Конвертер '#FF0000' -> RGBColor(255, 0, 0)"""
     hex_str = hex_str.lstrip('#')
     if len(hex_str) != 6: return None
     return RGBColor(int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
 
-def override_with_smart_rules(word, current_fmt, rules):
+def apply_rules_to_word(word, style, rules):
     """
-    Если пользователь включил "Умные правила" в боковой панели, 
-    эта функция перезапишет форматы на лету.
+    Применяет пользовательские правила (авто-выделение слов,
+    кавычки, капс) поверх оригинального стиля.
     """
-    if not rules.get('enable_smart_rules', False):
-        return current_fmt # Если правила выключены - отдаем оригинальный формат без изменений!
+    new_style = style.copy()
+    clean_word = word.strip(".,;:!?\"'«»()[]")
+    
+    # 1. Авто-выделение пользовательских слов
+    if rules.get('custom_bold_words'):
+        bold_list = [w.strip().lower() for w in rules['custom_bold_words'].split(',') if w.strip()]
+        if clean_word.lower() in bold_list:
+            new_style['bold'] = True
+            if rules.get('custom_words_color_on'):
+                new_style['color'] = rules['custom_words_color'].lstrip('#')
+                
+    # 2. Авто-выделение слов внутри кавычек «...» или "..."
+    if rules.get('bold_quotes'):
+        if any(q in word for q in ['«', '»', '"', '“', '”']):
+            new_style['bold'] = True
 
-    new_fmt = current_fmt.copy()
-    word_clean = word.strip()
-
-    # Правило 1: Текст написан КАПСОМ
-    if word_clean.isupper() and any(c.isalpha() for c in word_clean):
-        if rules['caps_bold']: new_fmt['bold'] = True
-        if rules['caps_italic']: new_fmt['italic'] = True
-        if rules['caps_color_on']: new_fmt['color'] = hex_to_rgb(rules['caps_color'])
-
-    # Правило 2: Нумерация со скобкой (например "1)", "а)", "25)")
-    if re.match(r'^[\dа-яА-Яa-zA-Z]+\)$', word_clean):
-        if rules['list_bold']: new_fmt['bold'] = True
-        if rules['list_italic']: new_fmt['italic'] = True
-        if rules['list_color_on']: new_fmt['color'] = hex_to_rgb(rules['list_color'])
-
-    return new_fmt
+    # 3. Базовые умные правила
+    if rules.get('enable_smart_rules', False):
+        word_clean = word.strip()
+        if word_clean.isupper() and any(c.isalpha() for c in word_clean) and len(word_clean) > 1:
+            if rules.get('caps_bold'): new_style['bold'] = True
+            if rules.get('caps_italic'): new_style['italic'] = True
+            if rules.get('caps_color_on'): new_style['color'] = rules['caps_color'].lstrip('#')
+            
+        if re.match(r'^[\dа-яА-Яa-zA-Z]+\)$', word_clean):
+            if rules.get('list_bold'): new_style['bold'] = True
+            if rules.get('list_italic'): new_style['italic'] = True
+            if rules.get('list_color_on'): new_style['color'] = rules['list_color'].lstrip('#')
+            
+    return new_style
 
 # =====================================================================
-# БЛОК 4: ПАРСЕРЫ ТЕКСТА (РАЗБИВКА НА СЛОВА С УЧЕТОМ ФОРМАТА)
+# БЛОК 4: ПАРСЕР ДОКУМЕНТА (С КЛОНИРОВАНИЕМ ФОРМАТОВ И СЖАТИЕМ РЯДОВ)
 # =====================================================================
 
-def parse_docx_file(file_bytes, rules):
+def parse_docx_file(file_bytes, rules, global_config):
     """
-    Читает загруженный Word-файл, разбивает его на слова,
-    сохраняя оригинальный стиль каждого слова.
+    Считывает структуру Word, бережно сохраняя родное XML форматирование,
+    и оптимизирует пустые ряды, если включена компактность.
     """
-    stream =[]
+    stream = []
     doc = Document(file_bytes)
+    collapse_empty = global_config.get('collapse_empty_lines', False)
     
     for p in doc.paragraphs:
-        if not p.text.strip():
-            # Если абзац пустой - добавляем просто перенос строки с пустым форматом
-            stream.append(("\n", {'bold': False, 'italic': False, 'underline': False, 'strike': False, 'color': None, 'highlight': None}))
+        text_stripped = p.text.strip()
+        if not text_stripped:
+            if not collapse_empty:
+                stream.append(("\n", {'bold': False, 'italic': False, 'underline': False, 'strike': False, 'color': None, 'shd': None, 'highlight': None, 'font_name': None, 'font_size': None}))
             continue
             
         for run in p.runs:
             text = run.text
             if not text: continue
             
-            orig_fmt = extract_run_format(run)
-            
-            # Разбиваем на слова, чтобы не сломать логику переноса в карточках
+            orig_fmt = extract_run_style_xml(run)
             words = text.split(' ')
             for i, word in enumerate(words):
                 if not word and i != len(words)-1:
@@ -164,40 +220,45 @@ def parse_docx_file(file_bytes, rules):
                     continue
                 if not word: continue
                 
-                # Применяем умные правила (если они включены)
-                final_fmt = override_with_smart_rules(word, orig_fmt, rules)
-                
-                # Возвращаем пробел на место
+                final_fmt = apply_rules_to_word(word, orig_fmt, rules)
                 suffix = " " if i < len(words) - 1 else ""
                 stream.append((word + suffix, final_fmt))
                 
-        # В конце каждого абзаца добавляем перенос строки
-        stream.append(("\n", {'bold': False, 'italic': False, 'underline': False, 'strike': False, 'color': None, 'highlight': None}))
+        stream.append(("\n", {'bold': False, 'italic': False, 'underline': False, 'strike': False, 'color': None, 'shd': None, 'highlight': None, 'font_name': None, 'font_size': None}))
+        
+    # Сжатие рядов (удаление множественных переносов)
+    if collapse_empty:
+        filtered_stream = []
+        prev_was_newline = False
+        for text_chunk, fmt in stream:
+            if text_chunk == "\n":
+                if prev_was_newline:
+                    continue
+                prev_was_newline = True
+            else:
+                prev_was_newline = False
+            filtered_stream.append((text_chunk, fmt))
+        stream = filtered_stream
         
     return stream
 
 # =====================================================================
-# БЛОК 5: ЯДРО ГЕНЕРАЦИИ (СБОРКА ИДЕАЛЬНОЙ СЕТКИ КАРТОЧЕК)
+# БЛОК 5: ЯДРО СБОРКИ DOCX (С КЛОНИРОВАНИЕМ И ЗАЩИТОЙ cantSplit)
 # =====================================================================
 
 def build_professional_docx(word_stream, config):
-    """
-    Берет поток слов со стилями и безупречно укладывает их 
-    в вашу таблицу (3x4 или любые другие настройки).
-    """
+    """Собирает сетку карточек, перенося 1-в-1 все стили оформления."""
     cells_data = []
-    current_cell =[]
+    current_cell = []
     current_count = 0
-    newline_weight = 35 # Вес переноса строки (чтобы защитить карточку от переполнения по высоте)
+    newline_weight = 35 
     
-    # 1. Распределяем слова по карточкам
     for text_chunk, fmt in word_stream:
         weight = newline_weight if text_chunk == "\n" else len(text_chunk)
         
-        # Защита от переполнения ячейки
         if current_count + weight > config['max_chars']:
             cells_data.append(current_cell)
-            current_cell =[]
+            current_cell = []
             current_count = 0
             if text_chunk == "\n": continue 
             
@@ -207,29 +268,24 @@ def build_professional_docx(word_stream, config):
     if current_cell:
         cells_data.append(current_cell)
         
-    # 2. Добиваем пустые ячейки (чтобы лист заканчивался ровно)
     while len(cells_data) % config['cols_num'] != 0:
         cells_data.append([])
 
-    # 3. Инициализация документа и настройка листа А4
     doc = Document()
     section = doc.sections[0]
     section.page_width = Mm(210)
     section.page_height = Mm(297)
     
-    # Поля страницы
     section.left_margin = Mm(config['page_margin'])
     section.right_margin = Mm(config['page_margin'])
     section.top_margin = Mm(config['page_margin'])
     section.bottom_margin = Mm(config['page_margin'])
 
-    # 4. Создание и настройка таблицы
     num_rows = len(cells_data) // config['cols_num']
     table = doc.add_table(rows=num_rows, cols=config['cols_num'])
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
     
-    # Настройка границ таблицы
     set_table_borders(
         table, 
         outer_style=config['border_outer'], 
@@ -237,15 +293,16 @@ def build_professional_docx(word_stream, config):
         border_size_pt=config['border_size']
     )
     
-    # 5. Заполнение таблицы текстом
     for row_idx, row in enumerate(table.rows):
         row.height = Mm(config['row_height'])
-        row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY # Жесткая фиксация высоты
+        row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+        
+        # ЗАЩИТА: запрещаем строкам/карточкам разрываться между страницами в Word
+        trPr = row._tr.get_or_add_trPr()
+        trPr.append(OxmlElement('w:cantSplit'))
         
         for col_idx, cell in enumerate(row.cells):
             cell.width = Mm(config['col_width'])
-            
-            # Отступы внутри ячейки
             set_cell_margins(cell, config['pad_mm'], config['pad_mm'], config['pad_mm'], config['pad_mm'])
             
             data_idx = row_idx * config['cols_num'] + col_idx
@@ -255,116 +312,115 @@ def build_professional_docx(word_stream, config):
             p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY if config['justify'] else WD_ALIGN_PARAGRAPH.LEFT
             
-            # Настройка интервалов абзаца
             p.paragraph_format.line_spacing = config['line_spacing']
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.space_before = Pt(0)
             
             if not data: continue
             
-            # Отрисовка каждого слова со своим форматом
             for text_chunk, fmt_dict in data:
                 if text_chunk == "\n":
                     p.add_run().add_break()
                 else:
                     run = p.add_run(text_chunk)
-                    
-                    # Применяем общий шрифт для всех карточек
-                    run.font.name = config['font_name']
-                    run.font.size = Pt(config['font_size'])
-                    
-                    # Накатываем оригинальные (или умные) стили
-                    apply_format_to_run(run, fmt_dict)
+                    apply_xml_style_to_run(run, fmt_dict, config)
     
-    # Сохранение в байтовый буфер для скачивания
     target = BytesIO()
     doc.save(target)
     target.seek(0)
     return target
 
-
 # =====================================================================
-# БЛОК 6: ИНТЕРФЕЙС STREAMLIT (ПОД КЛЮЧ)
+# БЛОК 6: РУСИФИЦИРОВАННЫЙ ИНТЕРФЕЙС STREAMLIT С ПОДПИСЯМИ
 # =====================================================================
 
-st.set_page_config(page_title="Pro Генератор Карточек", page_icon="✨", layout="wide")
+st.set_page_config(page_title="PRO Генератор Шпор", page_icon="✂️", layout="wide")
 
 st.markdown("""
 <style>
-    .main-header { font-size: 2.5rem; font-weight: 800; color: #1E1E1E; margin-bottom: 0px;}
-    .sub-header { font-size: 1.1rem; color: #555555; margin-bottom: 30px;}
+    .main-header { font-size: 2.3rem; font-weight: 800; color: #1E1E1E; margin-bottom: 0px;}
+    .sub-header { font-size: 1.05rem; color: #555555; margin-bottom: 25px;}
     .st-expander { border-radius: 8px !important; border: 1px solid #ddd !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header">✨ Pro Генератор Карточек</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Клонирует ваш Word-файл 1-в-1, сохраняя все цвета и выделения, перенося их в идеальную сетку карточек.</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">✂️ PRO Генератор Шпор (Клонирование 1-в-1)</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Клонирует исходное форматирование Word-файла (цветной текст, розовые/желтые маркеры фона) и собирает ровную сетку карточек.</div>', unsafe_allow_html=True)
 
 col_settings, col_main = st.columns([1.3, 2.2], gap="large")
 
-# ----------------- САЙДБАР: НАСТРОЙКИ СЕТКИ И ПРАВИЛ -----------------
 with col_settings:
-    st.header("⚙️ Настройки сетки (Оригинал)")
+    st.write("### 🎛️ Параметры Сетки")
     
-    with st.expander("📄 Разметка и Размеры (Ваша сетка)", expanded=True):
-        st.caption("Эти настройки гарантируют, что карточки встанут идеально.")
-        cols_num = st.number_input("Количество колонок", min_value=1, max_value=10, value=4, step=1)
-        page_margin = st.number_input("Поля страницы (мм)", min_value=0.0, max_value=50.0, value=10.0, step=1.0)
-        col_width = st.number_input("Ширина колонки (мм)", min_value=30.0, max_value=100.0, value=51.0, step=0.5)
+    with st.expander("📄 Разметка и Размеры карточек", expanded=True):
+        cols_num = st.number_input("Количество колонок", min_value=1, max_value=10, value=4)
+        page_margin = st.number_input("Поля страницы А4 (мм)", min_value=0.0, max_value=50.0, value=10.0, step=1.0)
+        col_width = st.number_input("Ширина карточки (мм)", min_value=30.0, max_value=100.0, value=51.0, step=0.5)
         row_height = st.number_input("Высота карточки (мм)", min_value=50.0, max_value=150.0, value=92.3, step=0.5)
-        pad_mm = st.number_input("Внутренний отступ (мм)", min_value=0.0, max_value=10.0, value=1.5, step=0.1)
+        pad_mm = st.number_input("Внутренний отступ текста от рамки (мм)", min_value=0.0, max_value=10.0, value=1.5, step=0.1)
 
-    with st.expander("🔲 Границы таблиц", expanded=False):
-        c_b1, c_b2 = st.columns(2)
-        border_options = ["single", "dashed", "dotted", "double", "nil"]
-        with c_b1: border_outer = st.selectbox("Внешняя рамка", border_options, index=0)
-        with c_b2: border_inner = st.selectbox("Внутренняя сетка", border_options, index=1)
-        border_size = st.number_input("Толщина линий (pt)", min_value=0.5, max_value=5.0, value=1.0, step=0.5)
+    with st.expander("⚡ Оптимизация и Компактность", expanded=True):
+        collapse_empty_lines = st.checkbox("🗜️ Сомкнуть ряды (Сжатие пустот)", value=True, help="Убирает повторяющиеся пустые строки и пустые абзацы из исходного файла, делая шпоры максимально плотными.")
 
-    with st.expander("🔤 Базовый Шрифт и Текст", expanded=False):
+    with st.expander("🔤 Параметры Шрифтов по умолчанию", expanded=False):
         font_preset = st.selectbox("Семейство шрифта", ["Raleway", "Times New Roman", "Arial", "Calibri", "Свой шрифт..."])
         font_custom = ""
         if font_preset == "Свой шрифт...":
-            font_custom = st.text_input("Введите точное название шрифта:", "Montserrat")
+            font_custom = st.text_input("Название шрифта:", "Montserrat")
         final_font = font_custom if font_preset == "Свой шрифт..." else font_preset
         
-        font_size = st.number_input("Кегль (pt)", min_value=3.0, max_value=14.0, value=5.0, step=0.5)
+        font_size = st.number_input("Базовый кегль (pt)", min_value=3.0, max_value=14.0, value=5.0, step=0.5)
         justify = st.checkbox("Выравнивание по ширине (Justify)", value=True)
-        line_spacing = st.number_input("Межстрочный интервал", min_value=0.5, max_value=2.0, value=0.92, step=0.01)
-        max_chars = st.slider("Макс. символов в карточке", 1000, 4000, 2600, step=50)
+        line_spacing = st.number_input("Базовый межстрочный интервал", min_value=0.5, max_value=2.0, value=0.92, step=0.01)
+        max_chars = st.slider("Лимит символов в одной карточке", 1000, 4000, 2600, step=50)
 
-    # СПЯЩИЕ НАСТРОЙКИ (ВКЛЮЧАЮТСЯ ГАЛОЧКОЙ)
-    st.header("🤖 Умные правила (Спящие)")
-    enable_smart_rules = st.checkbox("🔥 АКТИВИРОВАТЬ ПЕРЕЗАПИСЬ ФОРМАТОВ", value=False, help="Если выключено - скрипт на 100% копирует исходник. Если включить - эти правила изменят оригинальный файл.")
+    with st.expander("🔲 Границы и Рамки", expanded=False):
+        b1, b2 = st.columns(2)
+        border_options = ["single", "dashed", "dotted", "double", "nil"]
+        with b1: border_outer = st.selectbox("Внешняя рамка", border_options, index=0)
+        with b2: border_inner = st.selectbox("Внутренняя сетка (Линии реза)", border_options, index=1)
+        border_size = st.number_input("Толщина линий рамок (pt)", min_value=0.5, max_value=5.0, value=1.0, step=0.5)
+
+    st.write("### 🎯 Доп. Авто-выделения")
     
-    with st.expander("Настройки умных правил", expanded=enable_smart_rules):
-        if not enable_smart_rules:
-            st.warning("Сейчас правила спят. Поставьте галочку выше, чтобы они начали работать.")
-            
-        st.markdown("**Что делать с КАПСОМ (Слова ЗАГЛАВНЫМИ):**")
+    with st.expander("🎨 Выделение конкретных слов и кавычек", expanded=False):
+        bold_quotes = st.checkbox("Выделять слова в кавычках («...», \"...\") полужирным", value=True)
+        custom_bold_words = st.text_area("Список слов для авто-выделения полужирным (через запятую):", help="Например: Обоснуйте, человек, закон, истина")
+        custom_words_color_on = st.checkbox("Красить эти слова в свой цвет", value=False)
+        custom_words_color = "#FF0000"
+        if custom_words_color_on:
+            custom_words_color = st.color_picker("Цвет для авто-выделяемых слов", "#FF0000")
+
+    # Спящие умные правила (выключены по умолчанию)
+    enable_smart_rules = st.checkbox("🤖 Активировать умную перезапись стилей", value=False)
+    with st.expander("Настройки умных стилей", expanded=enable_smart_rules):
+        st.markdown("**Для КАПСЛОКА:**")
         r1, r2, r3 = st.columns(3)
         caps_bold = r1.checkbox("Жирный", value=True, disabled=not enable_smart_rules)
         caps_italic = r2.checkbox("Курсив", value=False, disabled=not enable_smart_rules)
         caps_color_on = r3.checkbox("Цвет", value=False, disabled=not enable_smart_rules)
         caps_color = st.color_picker("Цвет КАПСА", "#FF0000", disabled=not enable_smart_rules)
         
-        st.markdown("---")
-        st.markdown("**Что делать со списками (1), 2), а):**")
+        st.markdown("**Для нумерации списков (1), а):**")
         l1, l2, l3 = st.columns(3)
         list_bold = l1.checkbox("Жирный ", value=True, key="lb", disabled=not enable_smart_rules)
         list_italic = l2.checkbox("Курсив ", value=False, key="li", disabled=not enable_smart_rules)
         list_color_on = l3.checkbox("Цвет ", value=False, key="lc", disabled=not enable_smart_rules)
         list_color = st.color_picker("Цвет списков", "#0000FF", disabled=not enable_smart_rules)
 
-    # Сборка общего конфига
     config = {
         'cols_num': cols_num, 'page_margin': page_margin, 'col_width': col_width, 
         'row_height': row_height, 'pad_mm': pad_mm, 'border_outer': border_outer, 
         'border_inner': border_inner, 'border_size': border_size,
         'font_name': final_font, 'font_size': font_size, 'justify': justify, 
         'line_spacing': line_spacing, 'max_chars': max_chars,
+        'collapse_empty_lines': collapse_empty_lines,
         'rules': {
             'enable_smart_rules': enable_smart_rules,
+            'bold_quotes': bold_quotes,
+            'custom_bold_words': custom_bold_words,
+            'custom_words_color_on': custom_words_color_on,
+            'custom_words_color': custom_words_color,
             'caps_bold': caps_bold, 'caps_italic': caps_italic, 
             'caps_color_on': caps_color_on, 'caps_color': caps_color,
             'list_bold': list_bold, 'list_italic': list_italic, 
@@ -372,36 +428,31 @@ with col_settings:
         }
     }
 
-# ----------------- ЦЕНТРАЛЬНАЯ ПАНЕЛЬ: ЗАГРУЗКА -----------------
 with col_main:
-    st.write("### 📥 Режим загрузки документа (Клонирование)")
-    st.info("Загрузите ваш документ. Программа перенесет **КАЖДЫЙ** ваш желтый фон, зеленый шрифт, жирный или курсивный текст в ровную сетку карточек-шпор.")
+    st.write("### 📁 Клонирование из Вашего Word-файла")
+    st.info("Программа выполнит парсинг вашего файла, перенесёт все выделенные цветным маркером абзацы и шрифты в новую упорядоченную сетку карточек-шпор.")
     
-    uploaded_file = st.file_uploader("Загрузите файл (.docx)", type=["docx"])
+    uploaded_file = st.file_uploader("Загрузите файл .docx", type=["docx"])
     
-    if st.button("🚀 Сгенерировать шпоры (Clone Mode)", use_container_width=True, type="primary"):
+    if st.button("🚀 Сгенерировать шпоры по сетке", use_container_width=True, type="primary"):
         if uploaded_file is None:
-            st.error("❌ Пожалуйста, загрузите файл.")
+            st.error("❌ Загрузите документ для генерации.")
         else:
-            with st.spinner('Анализируем ваш шедевр и переносим в карточки...'):
+            with st.spinner('Анализ документа, перенос заливок, шрифтов и сборка карточек...'):
                 try:
-                    # 1. Парсим загруженный файл
-                    word_stream = parse_docx_file(uploaded_file, config['rules'])
-                    
-                    # 2. Собираем новый документ по сетке
+                    word_stream = parse_docx_file(uploaded_file, config['rules'], config)
                     result_doc = build_professional_docx(word_stream, config)
                     
-                    st.success("✅ Готово! Все ваши форматы бережно перенесены.")
-                    
+                    st.success("✅ Карточки сгенерированы идеально с сохранением всех цветов фона и стилей!")
                     st.download_button(
-                        label="📄 Скачать идеальные шпоры",
+                        label="📥 Скачать идеальные шпоры (.docx)",
                         data=result_doc,
-                        file_name=f"Perfect_CheatSheets_{uploaded_file.name}",
+                        file_name=f"Cards_1to1_Cloned_{uploaded_file.name}",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True
                     )
                 except Exception as e:
-                    st.error(f"❌ Критическая ошибка: {e}")
+                    st.error(f"❌ Произошла ошибка: {e}")
 
 st.markdown("---")
-st.caption("Режим «1-в-1 Ксерокс». Дизайн-код карточек сохранен из оригинала. Умные правила спят по умолчанию.")
+st.caption("Клонирование Word 1-в-1. cantSplit на уровне ячеек гарантирует отсутствие разрывов.")
