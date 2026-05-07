@@ -356,7 +356,7 @@ with col_settings:
         cols_num = st.number_input("Количество колонок", min_value=1, max_value=10, value=4)
         page_margin = st.number_input("Поля страницы А4 (мм)", min_value=0.0, max_value=50.0, value=10.0, step=1.0)
         col_width = st.number_input("Ширина карточки (мм)", min_value=30.0, max_value=100.0, value=51.0, step=0.5)
-        row_height = st.number_input("Высота карточки (мм)", min_value=50.0, max_value=150.0, value=92.3, step=0.5)
+        row_height = st.number_input("Высота карточки (мм)", min_value=50.0, max_value=150.0, value=88.3, step=0.1)
         pad_mm = st.number_input("Внутренний отступ текста от рамки (мм)", min_value=0.0, max_value=10.0, value=1.5, step=0.1)
 
     with st.expander("⚡ Оптимизация и Компактность", expanded=True):
@@ -370,9 +370,9 @@ with col_settings:
         final_font = font_custom if font_preset == "Свой шрифт..." else font_preset
         
         font_size = st.number_input("Базовый кегль (pt)", min_value=3.0, max_value=14.0, value=5.0, step=0.5)
-        justify = st.checkbox("Выравнивание по ширине (Justify)", value=True)
+        justify = st.checkbox("Выравнивание по ширине (Justify)", value=False)
         line_spacing = st.number_input("Базовый межстрочный интервал", min_value=0.5, max_value=2.0, value=0.92, step=0.01)
-        max_chars = st.slider("Лимит символов в одной карточке", 1000, 4000, 2600, step=50)
+        max_chars = st.slider("Лимит символов в одной карточке", 1000, 4000, 2100, step=50)
 
     with st.expander("🔲 Границы и Рамки", expanded=False):
         b1, b2 = st.columns(2)
