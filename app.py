@@ -248,44 +248,23 @@ def parse_docx_file(file_bytes, rules, global_config):
 
 def build_professional_docx(word_stream, config):
     """Собирает сетку карточек, перенося 1-в-1 все стили оформления."""
-    cells_data = []
+  cells_data =[]
     current_cell =[]
     current_count = 0
-    
-    # Буфер для накопления текущего абзаца/пункта
-    buffer =[]
-    buffer_len = 0
+    newline_weight = 35 
     
     for text_chunk, fmt in word_stream:
-        buffer.append((text_chunk, fmt))
-        weight = 0 if text_chunk == "\n" else len(text_chunk)
-        buffer_len += weight
+        weight = newline_weight if text_chunk == "\n" else len(text_chunk)
         
-        # Как только встречаем конец абзаца (перенос строки)
-        if text_chunk == "\n":
-            # Проверяем: если добавление этого абзаца превысит лимит, 
-            # и в карточке УЖЕ есть текст -> закрываем карточку и начинаем новую
-            if current_count + buffer_len > config['max_chars'] and current_count > 0:
-                cells_data.append(current_cell)
-                current_cell =[]
-                current_count = 0
-                
-            # Кладем целиком накопленный абзац в ячейку
-            current_cell.extend(buffer)
-            current_count += buffer_len
-            
-            # Очищаем буфер для следующего пункта
-            buffer =[]
-            buffer_len = 0
-            
-    # Если в конце файла остался кусок текста без переноса строки
-    if buffer:
-        if current_count + buffer_len > config['max_chars'] and current_count > 0:
+        if current_count + weight > config['max_chars']:
             cells_data.append(current_cell)
-            current_cell = buffer
-        else:
-            current_cell.extend(buffer)
+            current_cell =[]
+            current_count = 0
+            if text_chunk == "\n": continue 
             
+        current_cell.append((text_chunk, fmt))
+        current_count += weight
+        
     if current_cell:
         cells_data.append(current_cell)
 
