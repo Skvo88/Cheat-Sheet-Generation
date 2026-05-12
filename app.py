@@ -248,10 +248,10 @@ def parse_docx_file(file_bytes, rules, global_config):
 
 def build_professional_docx(word_stream, config):
     """Собирает сетку карточек, перенося 1-в-1 все стили оформления."""
-  cells_data =[]
-    current_cell =[]
+    cells_data = []    # Исправлено: 4 пробела
+    current_cell =[]  # Исправлено: 4 пробела
     current_count = 0
-    newline_weight = 35 
+    newline_weight = 35
     
     for text_chunk, fmt in word_stream:
         weight = newline_weight if text_chunk == "\n" else len(text_chunk)
